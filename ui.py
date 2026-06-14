@@ -6,10 +6,13 @@ Talks to the FastAPI server (main.py) over HTTP using only `requests`:
 Run with: `uv run streamlit run ui.py`
 """
 
+import os
+
 import requests
 import streamlit as st
 
-DEFAULT_API = "https://rag-chatbot-production-f86f.up.railway.app"
+# Default backend URL: FASTAPI_URL env var if set, otherwise localhost for dev.
+default_url = os.environ.get("FASTAPI_URL", "http://localhost:8000")
 # /chat can stall on Voyage's free-tier rate-limit backoff; give it room.
 CHAT_TIMEOUT = 180
 # A full PDF ingest embeds every chunk serially and can take many minutes.
@@ -39,7 +42,7 @@ def check_health(base_url: str) -> tuple[bool, dict]:
 # even though it's computed from the base-URL input rendered just below it.
 health_slot = st.sidebar.empty()
 # rstrip("/") so "http://localhost:8000/" and ".../" both work when we append paths.
-base_url = st.sidebar.text_input("API base URL", value=DEFAULT_API).rstrip("/")
+base_url = st.sidebar.text_input("API base URL", value=default_url).rstrip("/")
 
 connected, health = check_health(base_url)
 with health_slot.container():
