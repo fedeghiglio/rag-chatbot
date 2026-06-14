@@ -13,6 +13,8 @@ wheels/
 .env
 .env.*
 *.env
+# ...but the placeholder template SHOULD be committed.
+!.env.example
 
 # Local Claude Code settings (machine-specific allowlist, not shared config)
 .claude/settings.local.json

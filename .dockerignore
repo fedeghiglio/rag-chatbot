@@ -1,0 +1,12 @@
+# Keep the build context lean and prevent host-only / secret files from being
+# copied into the image. Critically excludes .venv so `COPY . .` can't clobber
+# the container's freshly-synced virtualenv with the host's.
+.git
+.venv
+__pycache__/
+*.py[oc]
+.env
+.env.*
+*.env
+.claude/
+test.pdf

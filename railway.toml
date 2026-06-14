@@ -1,0 +1,14 @@
+# Railway deployment config for the FastAPI backend service.
+# (The Streamlit frontend is deployed as a separate Railway service using
+# Dockerfile.streamlit — see README "Deploy to Railway".)
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Railway injects $PORT at runtime; bind to it. This overrides the Dockerfile's
+# default `--port 8000` CMD so the service is reachable on Railway's assigned port.
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
