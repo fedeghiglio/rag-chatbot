@@ -41,6 +41,13 @@
   - Sidebar: health badge (green Connected / red Disconnected, re-checked each run via `/health`), API base-URL input, PDF uploader + **Ingest PDF** button (spinner; success summary or red error), and a **Clear chat history** button.
   - Main: `Document Q&A` chat with `st.session_state`-persisted history; each assistant turn has a "Sources (N chunks used)" expander (source/chunk_index/similarity). Empty state prompts to upload; the Ask button is disabled + a warning shown when the API is unreachable.
   - Verified headlessly with Streamlit `AppTest` against the live server: connects, an Ask click returns a grounded answer with 5 sources, Clear empties the history. Added `streamlit` dep.
+- **Deployment scaffolding** (for Railway).
+  - `Dockerfile` (FastAPI, EXPOSE 8000) and `Dockerfile.streamlit` (UI, EXPOSE 8501) — both `python:3.11-slim` + uv, `uv sync --frozen --no-install-project`, venv on PATH.
+  - `.dockerignore` — keeps `.venv`/`.git`/`.env`/`test.pdf` out of the build context (esp. `.venv`, so `COPY . .` can't clobber the synced venv).
+  - `railway.toml` — FastAPI service: dockerfile build + `startCommand` binds `$PORT`.
+  - `.env.example` — placeholder values for the 4 env vars (no real keys).
+  - `README.md` — overview, local-run commands, Railway deploy steps, env-var table.
+  - Not yet deployed; nothing pushed to a remote.
 
 ### Verified end to end
 Stored 3 sentences; query `"what do dogs eat?"` → animals **0.730**, science 0.215, finance 0.149. Correct ranking.
@@ -52,6 +59,8 @@ Stored 3 sentences; query `"what do dogs eat?"` → animals **0.730**, science 0
 - pgvector embeddings are inserted as the JSON-array string form (`json.dumps(vector)`).
 - Secrets live in `~/.bashrc` (sourced into the shell before running).
 - **Citation drift in `rag.py`:** Claude's inline `[Source: …, chunk N]` citations occasionally name a chunk that wasn't actually in the retrieved set — the answer stays grounded, only the prose citation drifts. The returned `sources` list (the real retrieved chunks) is authoritative. Future fix: Anthropic's native **citations API** returns verifiable cited spans instead of prose-formatted citations.
+- **Python version mismatch for Docker:** `pyproject.toml` pins `requires-python >=3.14` but the Dockerfiles use `python:3.11-slim`. It builds (uv provisions 3.14 inside the image), but to make the slim base the real runtime, switch the base to `python:3.14-slim` or relax the pin to `>=3.11` (the code runs fine on 3.11).
+- **`.gitignore` negation:** `.env.*` would ignore `.env.example` too, so `!.env.example` re-includes the template (it must be committed).
 
 ### What's next
 - [x] **Chunking** — `chunker.py` (512-token chunks, 50 overlap). Done.
@@ -62,4 +71,5 @@ Stored 3 sentences; query `"what do dogs eat?"` → animals **0.730**, science 0
 - [ ] **Async refactor** — CLAUDE.md mandates async-first (`asyncio` + `httpx`). Move to `voyageai.AsyncClient` and the async Supabase client; current `db.py` is sync.
 - [ ] **Verifiable citations** — replace `rag.py`'s prose citations with Anthropic's citations API (see the citation-drift gotcha).
 - [x] **Streamlit UI** — `ui.py` (sidebar: health badge, PDF ingest, clear-chat; main: chat with source expanders). Verified via `AppTest`. Done.
+- [ ] **Deploy to Railway** — Dockerfiles + `railway.toml` + `.env.example` + README ready. Remaining: push to GitHub, create backend (Dockerfile) + frontend (Dockerfile.streamlit) services, set the 4 env vars, point the UI's sidebar API URL at the backend's Railway URL.
 - [ ] **Scale** — add an HNSW/IVFFlat index on `documents.embedding` once row counts grow.
