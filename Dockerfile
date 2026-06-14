@@ -23,6 +23,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 
-# Local/default command. On Railway this is overridden by railway.toml's
-# startCommand so the server binds Railway's injected $PORT.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form (not exec form) so /bin/sh expands ${PORT} at runtime — exec form
+# would pass "$PORT" literally. Railway injects $PORT; falls back to 8000 locally.
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
