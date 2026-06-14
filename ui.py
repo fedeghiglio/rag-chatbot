@@ -9,7 +9,7 @@ Run with: `uv run streamlit run ui.py`
 import requests
 import streamlit as st
 
-DEFAULT_API = "http://localhost:8000"
+DEFAULT_API = "https://rag-chatbot-production-f86f.up.railway.app"
 # /chat can stall on Voyage's free-tier rate-limit backoff; give it room.
 CHAT_TIMEOUT = 180
 # A full PDF ingest embeds every chunk serially and can take many minutes.
