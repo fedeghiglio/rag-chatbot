@@ -1,0 +1,28 @@
+# Streamlit frontend (frontend/ui.py)
+# Build context = repo ROOT. Reuses the backend project's locked dependencies
+# (which include streamlit + requests); there is no separate frontend lockfile.
+FROM python:3.14-slim
+
+# Bring in the uv binary from its official image (no pip bootstrap needed).
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# copy mode avoids hardlink warnings when uv writes across build layers.
+ENV UV_LINK_MODE=copy
+
+WORKDIR /code
+
+# Install dependencies from the backend project's manifests.
+COPY backend/pyproject.toml backend/uv.lock ./
+RUN uv sync --frozen --no-install-project
+
+# Copy just the Streamlit app.
+COPY frontend/ui.py ./
+
+# Put the synced virtualenv on PATH so `streamlit` below resolves to it.
+ENV PATH="/code/.venv/bin:$PATH"
+
+EXPOSE 8501
+
+# On Railway, set the service start command to bind $PORT instead:
+# streamlit run ui.py --server.port $PORT --server.address 0.0.0.0
+CMD ["streamlit", "run", "ui.py", "--server.port", "8501", "--server.address", "0.0.0.0"]

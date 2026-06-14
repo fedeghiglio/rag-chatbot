@@ -9,7 +9,7 @@ import os
 
 import anthropic
 
-from db import search_similar
+from .db import search_similar
 
 # Haiku 4.5 — fast and cheap, which suits short grounded answers over retrieved
 # context. Pinned to the exact dated id the task specified.

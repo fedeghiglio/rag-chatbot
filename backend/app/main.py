@@ -19,8 +19,8 @@ from supabase import create_client
 
 # Importing these validates the env (db.py/rag.py raise on missing keys at import)
 # and wires in the pipeline functions.
-from ingestor import ingest_pdf
-from rag import MODEL, answer
+from .ingestor import ingest_pdf
+from .rag import MODEL, answer
 
 # Dedicated Supabase client for the health check, built from the same env vars the
 # rest of the pipeline uses. Kept separate so /health doesn't reach into db.py

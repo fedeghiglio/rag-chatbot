@@ -4,7 +4,7 @@
 
 [build]
 builder = "dockerfile"
-dockerfilePath = "Dockerfile"
+dockerfilePath = "backend/Dockerfile"
 
 [deploy]
 # No startCommand on purpose: Railway falls back to the Dockerfile's CMD, which

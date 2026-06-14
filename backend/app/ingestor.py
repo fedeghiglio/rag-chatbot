@@ -10,8 +10,8 @@ import os
 import sys
 import time
 
-from chunker import chunk_pdf
-from db import embed_and_store, search_similar
+from .chunker import chunk_pdf
+from .db import embed_and_store, search_similar
 
 # Pacing for Voyage's free tier (~3 requests/minute): embed BATCH_SIZE chunks,
 # then pause BATCH_PAUSE seconds before the next batch. db.embed_and_store also

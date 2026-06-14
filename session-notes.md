@@ -47,7 +47,8 @@
   - `railway.toml` — FastAPI service: dockerfile build + `startCommand` binds `$PORT`.
   - `.env.example` — placeholder values for the 4 env vars (no real keys).
   - `README.md` — overview, local-run commands, Railway deploy steps, env-var table.
-  - Not yet deployed; nothing pushed to a remote.
+  - Pushed to GitHub (`fedeghiglio/rag-chatbot`, branch `master`); deploy config iterated (Dockerfile CMD → Python entrypoint reading `$PORT`; `railway.toml` startCommand removed so the CMD is used).
+- **Project restructure** — moved into a clean layout: `backend/app/` (FastAPI package, relative imports like `from .db import …`), `frontend/ui.py`, `db/schema.sql`, `scripts/embeddings_explorer.py`. `pyproject.toml`/`uv.lock` now in `backend/`. Docker builds use the **repo-root** context and COPY from the subdirs; `railway.toml` → `backend/Dockerfile`. Run locally from `backend/`: `uv run uvicorn app.main:app` (or `uv run python -m app.ingestor ../test.pdf`). Verified with a dry-run `import app.main`.
 
 ### Verified end to end
 Stored 3 sentences; query `"what do dogs eat?"` → animals **0.730**, science 0.215, finance 0.149. Correct ranking.

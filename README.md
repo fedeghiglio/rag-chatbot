@@ -1,65 +1,85 @@
 # rag-chatbot
 
-A production-minded **retrieval-augmented generation (RAG) chatbot over PDFs**. You upload a PDF; it is chunked into overlapping token windows, embedded with **Voyage AI** (`voyage-3`, 1024-dim), and stored in **Supabase** (Postgres + pgvector). At query time the question is embedded, the most similar chunks are retrieved via a pgvector cosine search, and **Claude** (`claude-haiku-4-5`) answers using only that retrieved context — with source citations and a refusal path when the answer isn't in the documents. A **FastAPI** service exposes the pipeline and a **Streamlit** app provides the chat UI.
+A production-minded **retrieval-augmented generation (RAG) chatbot over PDFs**. You upload a PDF; it is chunked into overlapping token windows, embedded with **Voyage AI** (`voyage-3`, 1024-dim), and stored in **Supabase** (Postgres + pgvector). At query time the question is embedded, the most similar chunks are retrieved via a pgvector cosine search, and **Claude** (`claude-haiku-4-5`) answers using only that retrieved context — with source citations and a refusal path when the answer isn't in the documents. A **FastAPI** backend exposes the pipeline and a **Streamlit** frontend provides the chat UI.
 
-## Architecture
+## Project structure
 
 ```
-Streamlit UI (ui.py) ──HTTP──▶ FastAPI (main.py)
-                                  ├─ /ingest → chunker.py → Voyage embed → Supabase (db.py)
-                                  ├─ /chat   → retrieve (pgvector) → Claude (rag.py)
-                                  └─ /health → Supabase ping
+rag-chatbot/
+├── backend/
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py          # FastAPI app (POST /ingest, POST /chat, GET /health)
+│   │   ├── rag.py           # generation layer (retrieve -> grounded Claude)
+│   │   ├── db.py            # storage + retrieval (Supabase pgvector)
+│   │   ├── chunker.py       # PDF -> token chunks
+│   │   └── ingestor.py      # ingestion pipeline (chunk -> embed -> store)
+│   ├── Dockerfile           # backend image (build context = repo root)
+│   ├── pyproject.toml
+│   └── uv.lock
+├── frontend/
+│   ├── ui.py                # Streamlit app
+│   └── Dockerfile.streamlit # frontend image (build context = repo root)
+├── db/
+│   └── schema.sql           # match_documents() pgvector function
+├── scripts/
+│   └── embeddings_explorer.py  # learning script, not shipped
+├── .env.example
+├── .gitignore
+├── .dockerignore
+├── railway.toml
+└── README.md
 ```
 
-| File | Role |
-|------|------|
-| `chunker.py` | PDF → 512-token chunks (50-token overlap) |
-| `db.py` | `embed_and_store` / `search_similar` over Supabase pgvector |
-| `ingestor.py` | Ingestion pipeline (chunk → embed → store) |
-| `rag.py` | Retrieval + grounded Claude generation with citations |
-| `main.py` | FastAPI: `POST /ingest`, `POST /chat`, `GET /health` |
-| `ui.py` | Streamlit front-end |
-| `schema.sql` | `match_documents` pgvector cosine-search function |
+The app modules form a Python package (`app`) and import each other with relative
+imports (`from .db import …`), so run them as modules from `backend/`.
 
 ## Run locally
 
-Prereqs: [uv](https://docs.astral.sh/uv/), a Supabase project with pgvector, and Voyage + Anthropic API keys.
+Prereqs: [uv](https://docs.astral.sh/uv/), a Supabase project with pgvector, and Voyage + Anthropic API keys. All `uv` commands run from `backend/` (that's where `pyproject.toml`/`uv.lock` live).
 
 ```bash
 # 1. Install dependencies
-uv sync
+cd backend && uv sync
 
-# 2. One-time DB setup: run schema.sql in the Supabase SQL editor
+# 2. One-time DB setup: run db/schema.sql in the Supabase SQL editor
 #    (creates the match_documents() pgvector function).
 
-# 3. Provide environment variables. The app reads them straight from the
-#    process environment (no .env auto-loading), so export them into your shell:
-cp .env.example .env        # then edit .env with real values
-set -a; source .env; set +a # export every var into the current shell
+# 3. Provide environment variables (the app reads them from the process env;
+#    there is no .env auto-loading). From the repo root:
+cp .env.example .env          # then edit .env with real values
+set -a; source .env; set +a   # export every var into the current shell
 
-# 4. Start the backend (http://localhost:8000)
-uv run uvicorn main:app --reload
+# 4. Backend API on http://localhost:8000  (run from backend/)
+cd backend && uv run uvicorn app.main:app --reload
 
-# 5. In another shell (same env vars exported), start the UI (http://localhost:8501)
-uv run streamlit run ui.py
+# 5. Frontend on http://localhost:8501 (another shell, env exported).
+#    Uses the backend venv; ui.py lives in ../frontend.
+cd backend && uv run streamlit run ../frontend/ui.py
 ```
 
-Then open the Streamlit app, upload a PDF in the sidebar, and ask questions. CLI alternatives: `uv run python ingestor.py <file.pdf>` to ingest, `uv run python rag.py` to query.
+> Set `FASTAPI_URL` to point the UI at a non-default backend (otherwise it defaults to `http://localhost:8000`; also editable in the sidebar at runtime).
+
+CLI alternatives (from `backend/`, run as modules so relative imports resolve):
+
+```bash
+uv run python -m app.ingestor ../test.pdf   # ingest a PDF
+uv run python -m app.rag                     # run the sample queries
+uv run python ../scripts/embeddings_explorer.py   # learning script
+```
 
 ## Deploy to Railway
 
-Two services from one repo — a FastAPI backend and a Streamlit frontend.
+Two services from one repo, both built with the repo root as the Docker build context.
 
 1. **Push to GitHub**, then create a Railway project from the repo.
-2. **Backend service** — uses `Dockerfile` and `railway.toml` (start command binds Railway's `$PORT`). Set the four environment variables (below) in the service's Variables tab.
-3. **Frontend service** — add a second service from the same repo, set its **Dockerfile path** to `Dockerfile.streamlit`, and set its **start command** to bind `$PORT`:
+2. **Backend service** — uses `railway.toml` (`dockerfilePath = "backend/Dockerfile"`). The Dockerfile CMD binds `$PORT` via a Python entrypoint. Set the four environment variables (below) in the service's Variables tab.
+3. **Frontend service** — add a second service from the same repo, set its **Dockerfile path** to `frontend/Dockerfile.streamlit`, and set its **start command** to bind `$PORT`:
    ```
    streamlit run ui.py --server.port $PORT --server.address 0.0.0.0
    ```
-   In the running Streamlit app, set the sidebar **API base URL** to the backend service's public Railway URL.
-4. **Database** — run `schema.sql` in Supabase once (if not already done).
-
-> **Python version:** the Dockerfiles use `python:3.14-slim` to match `pyproject.toml`'s `requires-python >=3.14`, so uv uses the image's own interpreter (no managed-Python download during the build).
+   Set `FASTAPI_URL` (Variables tab) to the backend service's public URL so the UI defaults to it.
+4. **Database** — run `db/schema.sql` in Supabase once (if not already done).
 
 ## Environment variables
 
@@ -69,5 +89,6 @@ Two services from one repo — a FastAPI backend and a Streamlit frontend.
 | `VOYAGE_API_KEY` | Voyage AI key — `voyage-3` embeddings |
 | `SUPABASE_URL` | Supabase project URL (`https://<ref>.supabase.co`) |
 | `SUPABASE_KEY` | Supabase **service-role** key — read/write to the `documents` table |
+| `FASTAPI_URL` | (frontend only) Backend base URL the Streamlit UI defaults to |
 
 See `.env.example` for the template. Never commit real keys — `.env` is gitignored.
