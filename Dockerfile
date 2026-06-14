@@ -23,6 +23,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 
-# Shell form (not exec form) so /bin/sh expands ${PORT} at runtime — exec form
-# would pass "$PORT" literally. Railway injects $PORT; falls back to 8000 locally.
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Python entrypoint reads PORT from the environment directly, bypassing shell
+# variable expansion entirely. Railway injects $PORT; falls back to 8000 locally.
+CMD ["python", "-c", "import os, uvicorn; uvicorn.run('main:app', host='0.0.0.0', port=int(os.environ.get('PORT', 8000)))"]
