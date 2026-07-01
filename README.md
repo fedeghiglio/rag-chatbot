@@ -1,6 +1,6 @@
 # rag-chatbot
 
-A production-minded **retrieval-augmented generation (RAG) chatbot over PDFs**. You upload a PDF; it is chunked into overlapping token windows, embedded with **Voyage AI** (`voyage-3`, 1024-dim), and stored in **Supabase** (Postgres + pgvector). At query time the question is embedded, the most similar chunks are retrieved via a pgvector cosine search, and **Claude** (`claude-haiku-4-5`) answers using only that retrieved context — with source citations and a refusal path when the answer isn't in the documents. A **FastAPI** backend exposes the pipeline and a **Streamlit** frontend provides the chat UI.
+A production-minded **retrieval-augmented generation (RAG) chatbot over PDFs**. You upload a PDF; it is chunked into overlapping token windows, embedded with **Voyage AI** (`voyage-3`, 1024-dim), and stored in **Supabase** (Postgres + pgvector). At query time the question is embedded, the most similar chunks are retrieved via a pgvector cosine search, and **Claude** (`claude-haiku-4-5`) answers using only that retrieved context — with source citations and a refusal path when the answer isn't in the documents. Citations use Anthropic's native citations API, so cited passages are verifiable spans from the actual retrieved documents rather than prose-formatted source tags. A **FastAPI** backend exposes the pipeline, a **Streamlit** frontend provides an operator/admin chat UI, and a self-contained embeddable JS widget (Shadow DOM, zero build step) provides a client-facing chat bubble for any website.
 
 ## Project structure
 
@@ -9,11 +9,13 @@ rag-chatbot/
 ├── backend/
 │   ├── app/
 │   │   ├── __init__.py
-│   │   ├── main.py          # FastAPI app (POST /ingest, POST /chat, GET /health)
-│   │   ├── rag.py           # generation layer (retrieve -> grounded Claude)
+│   │   ├── main.py          # FastAPI app (/ingest, /chat, /health, /documents, /widget.js, /demo)
+│   │   ├── rag.py           # generation layer (retrieve -> grounded Claude, native citations API)
 │   │   ├── db.py            # storage + retrieval (Supabase pgvector)
 │   │   ├── chunker.py       # PDF -> token chunks
-│   │   └── ingestor.py      # ingestion pipeline (chunk -> embed -> store)
+│   │   ├── ingestor.py      # ingestion pipeline (chunk -> embed -> store)
+│   │   └── static/
+│   │       └── widget.js    # embeddable chat widget (vanilla JS, Shadow DOM)
 │   ├── Dockerfile           # backend image (build context = repo root)
 │   ├── pyproject.toml
 │   └── uv.lock
@@ -24,6 +26,7 @@ rag-chatbot/
 │   └── schema.sql           # match_documents() pgvector function
 ├── scripts/
 │   └── embeddings_explorer.py  # learning script, not shipped
+├── demo.html                # demo page embedding the widget (served at /demo)
 ├── .env.example
 ├── .gitignore
 ├── .dockerignore
@@ -68,6 +71,29 @@ uv run python -m app.rag                     # run the sample queries
 uv run python ../scripts/embeddings_explorer.py   # learning script
 ```
 
+## API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/ingest` | Upload PDF → chunk → embed → store |
+| POST | `/chat` | `{question, top_k}` → grounded answer with citations |
+| GET | `/documents` | Distinct ingested sources + chunk counts, most-recent first |
+| GET | `/health` | Liveness + Supabase connectivity |
+| GET | `/widget.js` | Serve embeddable widget script |
+| GET | `/demo` | Serve demo HTML page embedding the widget |
+
+## Embeddable widget
+
+Any web page can add the chat widget with one line:
+
+```html
+<script src="https://<backend>/widget.js" data-api="https://<backend>"></script>
+```
+
+It renders as a chat bubble, isolated from host-page styles via Shadow DOM, and shows cited passages under each answer. `backend/app/static/widget.js` is vanilla JS with no build step. See `demo.html` (served at `/demo`) for a working example, including a deliberately hostile host page that proves the style isolation.
+
+CORS is controlled by `ALLOWED_ORIGINS` — see the env var table below.
+
 ## Deploy to Railway
 
 Two services from one repo, both built with the repo root as the Docker build context.
@@ -90,5 +116,6 @@ Two services from one repo, both built with the repo root as the Docker build co
 | `SUPABASE_URL` | Supabase project URL (`https://<ref>.supabase.co`) |
 | `SUPABASE_KEY` | Supabase **service-role** key — read/write to the `documents` table |
 | `FASTAPI_URL` | (frontend only) Backend base URL the Streamlit UI defaults to |
+| `ALLOWED_ORIGINS` | (backend only) CORS allowlist for the widget: `"*"` (default) or a comma-separated list, e.g. `https://client.com,https://www.client.com` |
 
 See `.env.example` for the template. Never commit real keys — `.env` is gitignored.
