@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NimbusPay — Support Knowledge Base</title>
+  <style>
+    /*
+     * Deliberately aggressive host-page styles.
+     * The widget must look correct despite all of these — that's the Shadow DOM
+     * isolation guarantee. A plain CSS-prefix approach would break here.
+     */
+    * {
+      box-sizing: border-box;
+      font-family: "Times New Roman", Times, serif;
+    }
+    button {
+      background: crimson !important;
+      color: yellow !important;
+      border: 4px solid navy !important;
+      padding: 18px 30px !important;
+      font-size: 22px !important;
+      cursor: default;
+    }
+    div {
+      border: 1px dashed #ccc;
+      padding: 6px;
+      margin-bottom: 4px;
+    }
+    input {
+      border: 3px solid green !important;
+      background: lightyellow !important;
+      font-size: 20px !important;
+      padding: 12px !important;
+    }
+    details summary {
+      color: orange !important;
+      font-size: 20px !important;
+    }
+
+    /* ── Actual page styles ─────────────────────────────────────────────── */
+    body {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 40px 24px 120px;
+      color: #111;
+      background: #fafaf8;
+    }
+    h1 { font-size: 2rem; margin-bottom: 8px; border-bottom: 2px solid #111; padding-bottom: 8px; }
+    h2 { font-size: 1.25rem; margin: 32px 0 8px; }
+    p  { margin-bottom: 16px; line-height: 1.7; }
+    .meta { color: #555; font-size: 0.85rem; margin-bottom: 32px; }
+    .card {
+      border: none !important;
+      background: #fff;
+      border-left: 4px solid #4f46e5 !important;
+      border-radius: 6px;
+      padding: 16px 20px !important;
+      margin: 24px 0 !important;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+    }
+    /* Doc list: neutralise the aggressive global div styles */
+    #doc-list {
+      border: none !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+    #doc-list p {
+      margin-bottom: 8px;
+    }
+    /* Refresh button overrides the aggressive global button styles */
+    .btn-refresh {
+      background: #4f46e5 !important;
+      color: #fff !important;
+      border: none !important;
+      padding: 3px 12px !important;
+      font-size: 0.78rem !important;
+      border-radius: 4px !important;
+      cursor: pointer !important;
+      vertical-align: middle;
+      margin-left: 8px;
+      font-family: system-ui, sans-serif !important;
+    }
+    .btn-refresh:hover { background: #4338ca !important; }
+  </style>
+</head>
+<body>
+
+  <h1>NimbusPay Support Knowledge Base</h1>
+  <p class="meta">Customer support docs · Powered by Document Q&A</p>
+
+  <p>
+    Welcome to NimbusPay's support knowledge base. Use the chat bubble in the
+    bottom-right corner to ask questions about billing, pricing plans, security
+    certifications, compliance requirements, and supported payment methods.
+  </p>
+
+  <div class="card">
+    <strong>How it works:</strong> Every answer is grounded in NimbusPay's
+    official documentation. The widget shows you exactly which passages were
+    cited, so you can verify the source before acting on the answer.
+  </div>
+
+  <h2>
+    Ingested documents
+    <button class="btn-refresh" id="refresh-docs" title="Refresh document list">↻ Refresh</button>
+  </h2>
+  <div id="doc-list">
+    <p style="color:#999; font-style:italic;">Loading…</p>
+  </div>
+
+  <h2>Sample questions to try</h2>
+  <p>
+    Click the <strong>💬</strong> bubble → type one of these:
+  </p>
+  <ul style="margin:0 0 16px 20px; line-height:2;">
+    <li>How much does the Growth plan cost?</li>
+    <li>Is NimbusPay SOC 2 certified?</li>
+    <li>What payment methods are supported?</li>
+    <li>What's the weather today? <em>(expect a grounded refusal)</em></li>
+  </ul>
+
+  <p style="color:#555; font-size:0.9rem;">
+    The chat widget is isolated from this page's styles via Shadow DOM — the
+    aggressive global CSS above (crimson buttons, dashed div borders, etc.) does
+    not affect the widget's appearance.
+  </p>
+
+  <!--
+    ═══════════════════════════════════════════════════════════════════════════
+    Widget embed — the ONLY line a client needs to add to their website.
+    Change the URLs to point at your deployed backend.
+    ═══════════════════════════════════════════════════════════════════════════
+  -->
+  <script src="http://localhost:8000/widget.js" data-api="http://localhost:8000"></script>
+
+  <script>
+    (function () {
+      // Derive the API base URL from the widget script tag so there's one place
+      // to change it (the data-api attribute above).
+      var apiBase = (document.querySelector('script[data-api]') || {}).dataset.api
+        || 'http://localhost:8000';
+
+      var docList = document.getElementById('doc-list');
+      var refreshBtn = document.getElementById('refresh-docs');
+
+      function renderDocs(docs) {
+        // Clear previous content safely — no innerHTML with dynamic data.
+        while (docList.firstChild) docList.removeChild(docList.firstChild);
+
+        if (!docs.length) {
+          var empty = document.createElement('p');
+          empty.style.color = '#999';
+          empty.style.fontStyle = 'italic';
+          empty.textContent = 'No documents ingested yet.';
+          docList.appendChild(empty);
+          return;
+        }
+
+        docs.forEach(function (doc) {
+          var p = document.createElement('p');
+          var name = document.createElement('strong');
+          name.textContent = doc.source;          // textContent — XSS safe
+          p.appendChild(name);
+          docList.appendChild(p);
+        });
+      }
+
+      function fetchDocs() {
+        fetch(apiBase + '/documents')
+          .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+          .then(renderDocs)
+          .catch(function () {
+            while (docList.firstChild) docList.removeChild(docList.firstChild);
+            var err = document.createElement('p');
+            err.style.color = '#999';
+            err.style.fontStyle = 'italic';
+            err.textContent = 'Could not load document list.';
+            docList.appendChild(err);
+          });
+      }
+
+      // Initial load + auto-refresh every 10 s so newly ingested docs appear.
+      fetchDocs();
+      setInterval(fetchDocs, 10000);
+      refreshBtn.addEventListener('click', fetchDocs);
+    }());
+  </script>
+
+</body>
+</html>

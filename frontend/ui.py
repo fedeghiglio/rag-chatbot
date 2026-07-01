@@ -107,15 +107,20 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
         # Assistant turns carry their retrieved sources (None for error turns).
         if msg["role"] == "assistant" and msg.get("sources") is not None:
-            with st.expander(f"Sources ({msg.get('chunks_used', 0)} chunks used)"):
+            with st.expander(f"Sources ({msg.get('chunks_used', 0)} chunks cited)"):
                 if msg["sources"]:
                     for src in msg["sources"]:
                         st.markdown(
-                            f"- `{src['source']}` — chunk {src['chunk_index']} "
+                            f"- **`{src['source']}`** — chunk {src['chunk_index']} "
                             f"(similarity {src['similarity']:.3f})"
                         )
+                        # cited_text is present when the native citations API is used.
+                        if src.get("cited_text"):
+                            cited = src["cited_text"]
+                            preview = cited[:200] + ("…" if len(cited) > 200 else "")
+                            st.caption(f'"{preview}"')
                 else:
-                    st.markdown("_No sources were retrieved for this answer._")
+                    st.markdown("_No sources were cited for this answer._")
 
 # Empty state: connected, but nothing ingested this session and no chat yet.
 if connected and not st.session_state.ingested and not st.session_state.messages:

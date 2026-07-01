@@ -11,9 +11,11 @@ Run: `uv run uvicorn main:app --reload` (or `uv run python main.py`).
 import os
 import shutil
 import tempfile
+from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from supabase import create_client
 
@@ -28,6 +30,59 @@ from .rag import MODEL, answer
 _health_sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 app = FastAPI(title="RAG chatbot", version="0.1.0")
+
+# CORS — needed so the widget can POST /chat from a different origin.
+# ALLOWED_ORIGINS: "*" (default, permissive for demo) or a comma-separated list
+# of allowed origins for production, e.g. "https://client.com,https://app.client.com".
+# allow_credentials must stay False when origins is "*" (CORS spec requirement).
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "*").strip()
+_allowed_origins = ["*"] if _raw_origins == "*" else [o.strip() for o in _raw_origins.split(",")]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+
+# Path to the static directory is resolved from __file__ so it works regardless
+# of which directory uvicorn is launched from.
+_STATIC = Path(__file__).parent / "static"
+
+
+@app.get("/widget.js", include_in_schema=False)
+def widget_js() -> FileResponse:
+    """Serve the embeddable chat widget script."""
+    return FileResponse(_STATIC / "widget.js", media_type="application/javascript")
+
+
+@app.get("/demo", include_in_schema=False)
+def demo() -> FileResponse:
+    """Serve the demo HTML page."""
+    demo_path = Path(__file__).parent.parent.parent / "demo.html"
+    return FileResponse(demo_path, media_type="text/html")
+
+
+@app.get("/documents")
+def list_documents() -> list[dict]:
+    """Return distinct ingested sources with chunk counts, most-recently added first.
+
+    Orders by the highest row id within each source — a proxy for insertion order
+    without needing a created_at column. Only fetches source+id (no embeddings).
+    """
+    rows = _health_sb.table("documents").select("source, id").execute().data
+    # Group in Python: lightweight since no embeddings or content are fetched.
+    groups: dict[str, dict] = {}
+    for r in rows:
+        src = r["source"]
+        if src not in groups:
+            groups[src] = {"chunk_count": 0, "max_id": 0}
+        groups[src]["chunk_count"] += 1
+        groups[src]["max_id"] = max(groups[src]["max_id"], r["id"])
+    return sorted(
+        [{"source": src, "chunk_count": g["chunk_count"]} for src, g in groups.items()],
+        key=lambda x: -groups[x["source"]]["max_id"],
+    )
 
 
 class ChatRequest(BaseModel):

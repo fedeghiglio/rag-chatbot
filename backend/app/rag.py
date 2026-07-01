@@ -1,8 +1,9 @@
 """RAG generation layer: retrieve relevant chunks, then have Claude answer from them.
 
 Pulls the most similar document chunks from Supabase (via db.search_similar) and
-asks Claude to answer using ONLY that context, with source citations. Claude is
-instructed to refuse rather than invent when the context doesn't cover the question.
+asks Claude to answer using ONLY those documents via the native citations API. Claude
+can only cite passages it was actually given — no free-text chunk numbering, no
+citation drift.
 """
 
 import os
@@ -12,7 +13,7 @@ import anthropic
 from .db import search_similar
 
 # Haiku 4.5 — fast and cheap, which suits short grounded answers over retrieved
-# context. Pinned to the exact dated id the task specified.
+# context. Pinned to the exact dated snapshot.
 MODEL = "claude-haiku-4-5-20251001"
 MAX_TOKENS = 1024
 
@@ -22,25 +23,28 @@ if not os.environ.get("ANTHROPIC_API_KEY"):
 # Bare constructor reads ANTHROPIC_API_KEY from the environment.
 _client = anthropic.Anthropic()
 
-# The grounding contract: answer only from context, cite sources, refuse if absent.
+# Drop the old citation-format instruction; the citations API handles attribution
+# structurally. Only the grounding / refusal contract remains here.
 SYSTEM_PROMPT = (
     "You are a precise document assistant. Answer the user's question using ONLY "
-    "the context provided. After your answer, list your sources as: "
-    "[Source: filename, chunk N]. If the context doesn't contain the answer, say "
-    "so explicitly — never make up information."
+    "the provided documents. If the documents do not contain the information needed "
+    "to answer the question, say so explicitly — do not use outside knowledge."
 )
 
 
 def answer(question: str, top_k: int = 5) -> dict:
     """Answer `question` from the top_k most similar stored chunks.
 
-    Returns {answer, sources, question, chunks_used}. If retrieval finds nothing,
-    returns the canned "not enough information" response without calling Claude.
+    Returns {answer, sources, question, chunks_used}.
+
+    sources is a list of {source, chunk_index, cited_text, similarity} — one entry
+    per citation Claude made. A single chunk cited for two distinct passages produces
+    two entries but is counted once in chunks_used.
     """
-    # 1. Retrieve the most relevant chunks (db's RPC already filters by similarity).
+    # 1. Retrieve the most relevant chunks (db's RPC filters by similarity threshold).
     chunks = search_similar(question, top_k=top_k)
 
-    # 2. Nothing retrieved → don't bother calling Claude; there's no context to ground on.
+    # 2. Nothing retrieved → don't call Claude; there's no context to ground on.
     if not chunks:
         return {
             "answer": (
@@ -52,50 +56,75 @@ def answer(question: str, top_k: int = 5) -> dict:
             "chunks_used": 0,
         }
 
-    # 4. Build the context block. Each chunk is labeled with its position AND its
-    # real source/chunk_index so Claude can cite "[Source: filename, chunk N]"
-    # exactly as the system prompt asks (the bare position alone can't do that).
-    context = "\n".join(
-        f"[chunk {i}] (Source: {c['source']}, chunk {c['chunk_index']}): {c['content']}"
-        for i, c in enumerate(chunks)
-    )
-    user_message = f"Context:\n{context}\n\nQuestion: {question}"
+    # 3. Build one document block per chunk. Custom-content source (type: "content")
+    # prevents the API from re-chunking our already-sized 512-token windows.
+    # citations: {enabled: True} must appear on every block (all-or-none rule).
+    doc_blocks: list[dict] = [
+        {
+            "type": "document",
+            "source": {
+                "type": "content",
+                "content": [{"type": "text", "text": c["content"]}],
+            },
+            "title": c["source"],
+            # context is a free-text hint surfaced in the raw citation object;
+            # embedding the DB chunk_index here makes debug inspection easier.
+            "context": f"chunk_index {c['chunk_index']}",
+            "citations": {"enabled": True},
+        }
+        for c in chunks
+    ]
 
-    # 5. Ask Claude. Non-streaming is fine here — max_tokens is small (1024), well
-    # under any HTTP timeout.
+    # 4. User message: document blocks first, then the question as a plain text block.
+    user_content: list[dict] = [*doc_blocks, {"type": "text", "text": question}]
+
+    # 5. Call Claude. No beta header needed — citations is GA.
     response = _client.messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
         system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_message}],
+        messages=[{"role": "user", "content": user_content}],
     )
-    # Join all text blocks (usually one) into the answer string.
-    answer_text = "".join(b.text for b in response.content if b.type == "text")
 
-    # 6. Surface which chunks grounded the answer (for citation/debugging in the UI).
-    sources = [
-        {
-            "source": c["source"],
-            "chunk_index": c["chunk_index"],
-            "similarity": c["similarity"],
-        }
-        for c in chunks
-    ]
+    # 6. Parse the response. The API splits the answer into multiple text blocks;
+    # blocks that draw from a document carry a .citations list. Each citation has
+    # cited_text and document_index (0-based into our doc_blocks / chunks list).
+    answer_parts: list[str] = []
+    sources: list[dict] = []
+    cited_indices: set[int] = set()
+
+    for block in response.content:
+        if block.type != "text":
+            continue
+        answer_parts.append(block.text)
+        # block.citations is None when this text span has no citations.
+        if not block.citations:
+            continue
+        for cit in block.citations:
+            idx = cit.document_index  # maps back to chunks[idx]
+            cited_indices.add(idx)
+            sources.append({
+                "source": chunks[idx]["source"],
+                "chunk_index": chunks[idx]["chunk_index"],
+                "cited_text": cit.cited_text,
+                "similarity": chunks[idx]["similarity"],
+            })
+
     return {
-        "answer": answer_text,
+        "answer": "".join(answer_parts),
         "sources": sources,
         "question": question,
-        "chunks_used": len(chunks),
+        # Count distinct documents actually cited, not just retrieved.
+        "chunks_used": len(cited_indices),
     }
 
 
 if __name__ == "__main__":
     questions = [
+        # In-scope: should answer with cited passages from the constitutional AI paper.
         "What is constitutional AI and why was it developed?",
-        "What are the two phases of the constitutional AI process?",
-        # Likely under-covered in the retrieved chunks — exercises the
-        # "context doesn't contain the answer" path (Claude should say so).
-        "What is RLHF and how does it relate to this paper?",
+        # Off-topic: should produce a grounded refusal (not a geography hallucination).
+        "What is the capital of France?",
     ]
 
     for q in questions:
@@ -103,8 +132,8 @@ if __name__ == "__main__":
         print("=" * 70)
         print(f"Q: {result['question']}")
         print(f"\n{result['answer']}\n")
-        # Show the chunks that grounded the answer, best similarity first.
-        print(f"Sources ({result['chunks_used']} chunks used):")
+        print(f"Cited passages ({result['chunks_used']} unique chunks):")
         for s in result["sources"]:
-            print(f"  - {s['source']} chunk {s['chunk_index']} (sim {s['similarity']:.3f})")
+            preview = s["cited_text"][:100].replace("\n", " ")
+            print(f"  [{s['source']} chunk {s['chunk_index']}] {preview!r}")
         print()
